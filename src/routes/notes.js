@@ -1,0 +1,41 @@
+// src/routes/notes.js
+
+const express = require('express');
+const router = express.Router();
+const noteController = require('../controllers/noteController');
+const quizController = require('../controllers/quizController'); // 👈 이 부분이 있는지 확인
+const { authenticateToken: authMiddleware } = require('../middleware/auth');
+const { uploadSingle } = require('../middleware/upload');
+const { body } = require('express-validator');
+
+// 노트 목록 조회 (GET /api/notes)
+router.get('/', authMiddleware, noteController.getNotes);
+
+// 노트 상세 조회 (GET /api/notes/:noteId)
+router.get('/:noteId', authMiddleware, noteController.getNote);
+
+// 노트 생성 (POST /api/notes)
+router.post(
+  '/',
+  authMiddleware,
+  uploadSingle('file'),
+  [
+    body('title', '제목(title)은 반드시 입력해야 합니다.').not().isEmpty().trim(),
+    body('tags', '태그(tags)는 배열 형태여야 합니다.').optional().isArray()
+  ],
+  noteController.createNote
+);
+
+// 노트 수정 (PUT /api/notes/:noteId)
+router.put('/:noteId', authMiddleware, uploadSingle('file'), noteController.updateNote);
+
+// 노트 삭제 (DELETE /api/notes/:noteId)
+router.delete('/:noteId', authMiddleware, noteController.deleteNote);
+
+
+// ▼▼▼▼▼ 이 경로가 누락되었습니다 ▼▼▼▼▼
+// 특정 노트로부터 퀴즈 생성
+router.post('/:noteId/quiz', authMiddleware, quizController.createQuizFromNote);
+// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+module.exports = router;
