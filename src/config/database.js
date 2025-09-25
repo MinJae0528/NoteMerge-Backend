@@ -1,21 +1,20 @@
+// src/config/database.js
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
-const dbConfig = {
+// 커넥션 풀을 위한 설정
+const poolConfig = {
     host: process.env.DB_HOST || 'localhost',
     port: process.env.DB_PORT || 3306,
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'notemerge',
+    database: process.env.DB_NAME || 'notemerge_db',
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0,
-    acquireTimeout: 60000,
-    timeout: 60000,
-    reconnect: true
+    queueLimit: 0
 };
 
-const pool = mysql.createPool(dbConfig);
+const pool = mysql.createPool(poolConfig);
 
 const testConnection = async () => {
     try {
@@ -29,8 +28,6 @@ const testConnection = async () => {
 };
 
 module.exports = {
-    pool, // 필요하다면 pool 자체도 노출
-    query: (...args) => pool.execute(...args), 
-    execute: (...args) => pool.execute(...args),
+    pool,
     testConnection
 };

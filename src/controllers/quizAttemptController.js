@@ -1,4 +1,3 @@
-// src/controllers/quizAttemptController.js
 const quizAttemptService = require('../services/quizAttemptService');
 
 const getQuizAttempts = async (req, res) => {
@@ -59,8 +58,13 @@ const deleteQuizAttempt = async (req, res) => {
 };
 
 const getQuizStats = async (req, res) => {
-    // TODO: 퀴즈 통계 조회 로직 구현
-    res.send('getQuizStats function is ready.');
+    try {
+        const stats = await quizAttemptService.getQuizStatsFromDB(req.user.user_id);
+        res.json({ success: true, data: { stats } });
+    } catch (error) {
+        console.error('Get quiz stats error:', error);
+        res.status(500).json({ success: false, message: '퀴즈 통계를 가져오는데 실패했습니다.' });
+    }
 };
 
 module.exports = {
@@ -70,3 +74,4 @@ module.exports = {
     getQuizStats,
     deleteQuizAttempt,
 };
+

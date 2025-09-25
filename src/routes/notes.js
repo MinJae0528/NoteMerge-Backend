@@ -3,11 +3,13 @@
 const express = require('express');
 const router = express.Router();
 const noteController = require('../controllers/noteController');
-const quizController = require('../controllers/quizController'); // 👈 이 부분이 있는지 확인
+const quizController = require('../controllers/quizController');
+const noteLinkController = require('../controllers/noteLinkController'); // ✨ noteLinkController 임포트 추가
 const { authenticateToken: authMiddleware } = require('../middleware/auth');
 const { uploadSingle } = require('../middleware/upload');
 const { body } = require('express-validator');
 
+// --- 노트 CRUD ---
 // 노트 목록 조회 (GET /api/notes)
 router.get('/', authMiddleware, noteController.getNotes);
 
@@ -33,9 +35,14 @@ router.put('/:noteId', authMiddleware, uploadSingle('file'), noteController.upda
 router.delete('/:noteId', authMiddleware, noteController.deleteNote);
 
 
-// ▼▼▼▼▼ 이 경로가 누락되었습니다 ▼▼▼▼▼
-// 특정 노트로부터 퀴즈 생성
+// --- 노트와 관련된 추가 기능 ---
+
+// ✨ 특정 노트로부터 퀴즈 생성
 router.post('/:noteId/quiz', authMiddleware, quizController.createQuizFromNote);
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+// ✨ 특정 노트의 백링크 목록 조회
+router.get('/:noteId/links', authMiddleware, noteLinkController.getNoteLinks);
+
 
 module.exports = router;
+
