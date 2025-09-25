@@ -61,13 +61,20 @@ const getNotesFromDB = async (userId, { folder_id, search, page = 1, limit = 20 
 // 노트 상세 조회
 const getNoteById = async (noteId, userId) => {
     const [notes] = await pool.execute(
-        `SELECT n.*, f.name as folder_name, fi.file_id, fi.file_name, fi.file_type, fi.file_url, fi.file_size, fi.uploaded_at,
+        `SELECT n.*, 
+               f.name as folder_name, 
+               fi.file_id, 
+               fi.original_name as file_name, 
+               fi.file_type, 
+               fi.storage_url as file_url, 
+               fi.file_size, 
+               fi.uploaded_at,
                GROUP_CONCAT(DISTINCT t.tag_id, ':', t.name ORDER BY t.name ASC SEPARATOR ',') as tags
-         FROM Note n
-         LEFT JOIN Folder f ON n.folder_id = f.folder_id
-         LEFT JOIN File fi ON n.file_id = fi.file_id
-         LEFT JOIN Note_Tag_Link ntl ON n.note_id = ntl.note_id
-         LEFT JOIN Tag t ON ntl.tag_id = t.tag_id
+         FROM notes n
+         LEFT JOIN files fi ON n.file_id = fi.file_id
+         LEFT JOIN folders f ON fi.folder_id = f.folder_id
+         LEFT JOIN note_tag_link ntl ON n.note_id = ntl.note_id
+         LEFT JOIN tag t ON ntl.tag_id = t.tag_id
          WHERE n.note_id = ? AND n.user_id = ?
          GROUP BY n.note_id`, [noteId, userId]
     );
@@ -85,8 +92,8 @@ const createNoteInDB = async (noteData, aiData, keywordsData) => {
         const { userId, folder_id, fileId, title, content, tags } = noteData;
         const { summary, embedding } = aiData;
         const [result] = await connection.execute(
-            'INSERT INTO Note (user_id, folder_id, file_id, title, content, summary, embedding) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [userId, folder_id || null, fileId, title || null, content, summary, embedding]
+            'INSERT INTO notes (user_id, file_id, title, content, summary, embedding) VALUES (?, ?, ?, ?, ?, ?)',
+            [userId, fileId, title || null, content, summary, embedding]
         );
         const noteId = result.insertId;
         await _handleNoteTags(connection, noteId, tags);
@@ -106,8 +113,11 @@ const createNoteInDB = async (noteData, aiData, keywordsData) => {
 
 // 노트 수정을 위한 기존 노트 정보 조회
 const findNoteForUpdate = async (noteId, userId) => {
-    const [notes] = await pool.execute('SELECT file_id, title, content, summary, embedding FROM Note WHERE note_id = ? AND user_id = ?', [noteId, userId]);
-    return notes[0];
+    const [rows] = await pool.execute(
+        'SELECT file_id, title, content, summary, embedding FROM notes WHERE note_id = ? AND user_id = ?',
+        [noteId, userId]
+    );
+    return rows[0];
 };
 
 // 노트 업데이트 (트랜잭션)
@@ -118,12 +128,18 @@ const updateNoteInDB = async (noteId, userId, noteData, aiData, keywordsData) =>
         await connection.beginTransaction();
         const { title, content, folder_id, fileId, tags } = noteData;
         const { summary, embedding } = aiData;
-        const sql = `
-            UPDATE Note SET
-                title = ?, content = ?, folder_id = ?, file_id = ?,
-                summary = ?, embedding = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE note_id = ? AND user_id = ?`;
-        await connection.execute(sql, [title, content, folder_id, fileId, summary, embedding, noteId, userId]);
+        const params = [
+            title !== undefined ? title : null,
+            content !== undefined ? content : null,
+            summary !== undefined ? summary : null,
+            embedding !== undefined ? embedding : null,
+            noteId,
+            userId
+        ];
+        await pool.execute(
+            'UPDATE notes SET title = ?, content = ?, summary = ?, embedding = ? WHERE note_id = ? AND user_id = ?',
+            params
+        );
         await _handleNoteTags(connection, noteId, tags);
         await connection.execute('DELETE FROM Keyword WHERE note_id = ?', [noteId]);
         if (keywordsData && keywordsData.length > 0) {
@@ -145,10 +161,10 @@ const deleteNoteFromDB = async (noteId, userId) => {
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-        const [notes] = await connection.execute('SELECT file_id FROM Note WHERE note_id = ? AND user_id = ?', [noteId, userId]);
+        const [notes] = await connection.execute('SELECT file_id FROM notes WHERE note_id = ? AND user_id = ?', [noteId, userId]);
         if (notes.length === 0) throw new Error('삭제할 노트를 찾을 수 없습니다.');
         const fileIdToDelete = notes[0].file_id;
-        await connection.execute('DELETE FROM Note WHERE note_id = ?', [noteId]);
+        await connection.execute('DELETE FROM notes WHERE note_id = ?', [noteId]);
         let fileToDelete = null;
         if (fileIdToDelete) {
             const [fileRecord] = await connection.execute('SELECT * FROM File WHERE file_id = ?', [fileIdToDelete]);

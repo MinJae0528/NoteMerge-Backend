@@ -26,9 +26,14 @@ const deleteFolder = async (userId, folderId) => {
     return result.affectedRows > 0;
 };
 
+async function autoOrganizeNoteByKeywords(noteId, keywordsData, userId) {
+    // ...함수 구현...
+}
+
 module.exports = {
     createFolder,
     getFoldersByUserId,
     updateFolder,
-    deleteFolder
+    deleteFolder,
+    autoOrganizeNoteByKeywords
 };

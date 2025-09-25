@@ -1,4 +1,5 @@
 const quizAttemptService = require('../services/quizAttemptService');
+const authMiddleware = require('../middleware/auth');
 
 const getQuizAttempts = async (req, res) => {
     try {
@@ -63,7 +64,7 @@ const getQuizStats = async (req, res) => {
         res.json({ success: true, data: { stats } });
     } catch (error) {
         console.error('Get quiz stats error:', error);
-        res.status(500).json({ success: false, message: '퀴즈 통계를 가져오는데 실패했습니다.' });
+        res.status(500).json({ success: false, message: '퀴즈 통계 조회에 실패했습니다.' });
     }
 };
 
@@ -74,4 +75,3 @@ module.exports = {
     getQuizStats,
     deleteQuizAttempt,
 };
-

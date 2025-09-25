@@ -2,11 +2,15 @@ const { pool } = require('../config/database');
 
 /**
  * 퀴즈 시도 기록 목록을 조회합니다.
- * @param {number} userId 사용자 ID
- * @param {object} options 쿼리 옵션 (quiz_id, page, limit)
- * @returns {Promise<object>} 시도 기록 목록과 전체 개수
  */
-const getQuizAttemptsFromDB = async (userId, { quiz_id, page = 1, limit = 20 }) => {
+const getQuizAttemptsFromDB = async (userId, { quiz_id, page, limit }) => {
+    let pageNum = parseInt(page, 10);
+    let limitNum = parseInt(limit, 10);
+
+    if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
+    if (isNaN(limitNum) || limitNum < 1) limitNum = 20;
+    const offset = (pageNum - 1) * limitNum;
+
     let query = `
       SELECT qa.attempt_id, qa.quiz_id, qa.score, qa.attempted_at, q.title as quiz_title, n.title as note_title
       FROM quiz_attempts qa
@@ -14,14 +18,23 @@ const getQuizAttemptsFromDB = async (userId, { quiz_id, page = 1, limit = 20 }) 
       JOIN notes n ON q.note_id = n.note_id
       WHERE qa.user_id = ?`;
     const params = [userId];
-    if (quiz_id) { query += ' AND qa.quiz_id = ?'; params.push(quiz_id); }
-    query += ' ORDER BY qa.attempted_at DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), (page - 1) * limit);
+    if (quiz_id !== undefined && quiz_id !== null && quiz_id !== '') {
+        query += ' AND qa.quiz_id = ?';
+        params.push(quiz_id);
+    }
+    // LIMIT/OFFSET을 쿼리문에 직접 삽입
+    query += ` ORDER BY qa.attempted_at DESC LIMIT ${limitNum} OFFSET ${offset}`;
+
+    console.log('쿼리 파라미터:', params);
+
     const [attempts] = await pool.execute(query, params);
 
     let countQuery = 'SELECT COUNT(*) as total FROM quiz_attempts qa WHERE qa.user_id = ?';
     const countParams = [userId];
-    if (quiz_id) { countQuery += ' AND qa.quiz_id = ?'; countParams.push(quiz_id); }
+    if (quiz_id !== undefined && quiz_id !== null && quiz_id !== '') {
+        countQuery += ' AND qa.quiz_id = ?';
+        countParams.push(quiz_id);
+    }
     const [countResult] = await pool.execute(countQuery, countParams);
 
     return { attempts, total: countResult[0].total };
@@ -29,9 +42,6 @@ const getQuizAttemptsFromDB = async (userId, { quiz_id, page = 1, limit = 20 }) 
 
 /**
  * 특정 퀴즈 시도 기록의 상세 정보를 조회합니다.
- * @param {number} userId 사용자 ID
- * @param {number} attemptId 시도 ID
- * @returns {Promise<object|null>} 시도 기록 상세 정보 또는 null
  */
 const getQuizAttemptById = async (userId, attemptId) => {
     const [attempts] = await pool.execute(
@@ -43,16 +53,12 @@ const getQuizAttemptById = async (userId, attemptId) => {
     );
     if (attempts.length === 0) return null;
     const attempt = attempts[0];
-    attempt.answers = JSON.parse(attempt.answers); // JSON 문자열을 객체로 변환
+    attempt.answers = JSON.parse(attempt.answers);
     return attempt;
 };
 
 /**
  * 사용자가 제출한 답안을 채점하고 결과를 DB에 저장합니다.
- * @param {number} userId 사용자 ID
- * @param {number} quizId 퀴즈 ID
- * @param {object} answers 사용자가 제출한 답안 객체
- * @returns {Promise<object>} 채점 결과
  */
 const submitQuizAttempt = async (userId, quizId, answers) => {
     const [questions] = await pool.execute('SELECT question_id, correct_answer, type, question_text FROM quiz_questions WHERE quiz_id = ?', [quizId]);
@@ -75,7 +81,7 @@ const submitQuizAttempt = async (userId, quizId, answers) => {
         });
     });
     
-    const score = (correctCount / questions.length) * 100;
+    const score = (questions.length > 0) ? (correctCount / questions.length) * 100 : 0;
     const [result] = await pool.execute(
         'INSERT INTO quiz_attempts (quiz_id, user_id, score, answers) VALUES (?, ?, ?, ?)',
         [quizId, userId, score, JSON.stringify(answers)]
@@ -86,9 +92,6 @@ const submitQuizAttempt = async (userId, quizId, answers) => {
 
 /**
  * 특정 퀴즈 시도 기록을 삭제합니다.
- * @param {number} userId 사용자 ID
- * @param {number} attemptId 시도 ID
- * @returns {Promise<boolean>} 삭제 성공 여부
  */
 const deleteQuizAttemptById = async (userId, attemptId) => {
     const [result] = await pool.execute('DELETE FROM quiz_attempts WHERE attempt_id = ? AND user_id = ?', [attemptId, userId]);
@@ -97,8 +100,6 @@ const deleteQuizAttemptById = async (userId, attemptId) => {
 
 /**
  * 사용자의 퀴즈 통계를 조회합니다.
- * @param {number} userId 사용자 ID
- * @returns {Promise<object>} 전체 통계, 최근 기록, 점수 분포 등
  */
 const getQuizStatsFromDB = async (userId) => {
     const statsQuery = `
@@ -141,4 +142,3 @@ module.exports = {
     deleteQuizAttemptById,
     getQuizStatsFromDB
 };
-

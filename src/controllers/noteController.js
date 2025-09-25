@@ -76,7 +76,8 @@ const createNote = async (req, res) => {
             }
         }
         
-        const textForAI = `${title || ''} ${finalContent}`.trim();
+        // 이미 선언된 title, content 변수를 활용
+        const textForAI = `${title || ''} ${content || ''}`.trim();
         let aiData = { summary: null, embedding: null };
         let keywordsData = [];
 
@@ -136,6 +137,9 @@ const updateNote = async (req, res) => {
             embedding: existingNote.embedding 
         };
         let keywordsData = [];
+
+        // 이미 선언된 title, content 변수를 활용
+        const textForAI = `${title || ''} ${content || ''}`.trim();
 
         if (isContentChanged && textForAI) {
             // ✨ AI 호출을 2번으로 최적화
