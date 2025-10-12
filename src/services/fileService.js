@@ -1,70 +1,107 @@
-// src/services/folderService.js
+// src/services/fileService.js
 const { pool } = require('../config/database');
+const fs = require('fs').promises;
+const path = require('path');
 
-const createFolder = async (userId, name, parentFolderId = null) => {
-    const sql = 'INSERT INTO Folders (user_id, name, parent_folder_id) VALUES (?, ?, ?)';
-    const [result] = await pool.execute(sql, [userId, name, parentFolderId]);
-    return { folder_id: result.insertId, name, parent_folder_id: parentFolderId };
-};
-
-const getFoldersByUserId = async (userId) => {
-    const sql = 'SELECT folder_id, name, parent_folder_id FROM Folders WHERE user_id = ? ORDER BY name ASC';
-    const [folders] = await pool.execute(sql, [userId]);
-    return folders;
-};
-
-const updateFolder = async (userId, folderId, newName) => {
-    const sql = 'UPDATE Folders SET name = ? WHERE folder_id = ? AND user_id = ?';
-    const [result] = await pool.execute(sql, [newName, folderId, userId]);
-    return result.affectedRows > 0;
-};
-
-const deleteFolder = async (userId, folderId) => {
-    const sql = 'DELETE FROM Folders WHERE folder_id = ? AND user_id = ?';
-    const [result] = await pool.execute(sql, [folderId, userId]);
-    return result.affectedRows > 0;
+/**
+ * 파일 정보를 데이터베이스에 저장합니다.
+ */
+const createFile = async (fileData) => {
+    const { userId, fileName, fileUrl, filePath, fileSize, fileType, folderId = null } = fileData;
+    
+    const sql = `
+        INSERT INTO files (user_id, folder_id, original_name, storage_url, file_path, file_type, file_size, uploaded_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `;
+    
+    const [result] = await pool.execute(sql, [
+        userId, 
+        folderId, 
+        fileName, 
+        fileUrl, 
+        filePath, 
+        fileType, 
+        fileSize
+    ]);
+    
+    return result.insertId;
 };
 
 /**
- * AI가 추출한 키워드를 기반으로 노트를 자동으로 폴더에 정리합니다.
- * @param {number} noteId 정리할 노트 ID
- * @param {Array<object>} keywords AI가 추출한 키워드 객체 배열
- * @param {number} userId 사용자 ID
+ * 파일 ID로 파일 정보를 조회합니다.
  */
-const autoOrganizeNoteByKeywords = async (noteId, keywords, userId) => {
-    if (!keywords || keywords.length === 0) return;
+const getFileById = async (fileId) => {
+    const sql = 'SELECT * FROM files WHERE file_id = ?';
+    const [rows] = await pool.execute(sql, [fileId]);
+    return rows.length > 0 ? rows[0] : null;
+};
 
-    // 가장 관련성 높은 키워드를 폴더 이름으로 사용
-    const primaryKeyword = keywords.sort((a, b) => b.score - a.score)[0].word;
+/**
+ * 사용자의 파일 목록을 조회합니다.
+ */
+const getFilesByUserId = async (userId, folderId = null) => {
+    let sql = 'SELECT * FROM files WHERE user_id = ?';
+    const params = [userId];
     
+    if (folderId !== null) {
+        sql += ' AND folder_id = ?';
+        params.push(folderId);
+    }
+    
+    sql += ' ORDER BY uploaded_at DESC';
+    
+    const [files] = await pool.execute(sql, params);
+    return files;
+};
+
+/**
+ * 파일을 삭제합니다.
+ */
+const deleteFile = async (fileId, userId) => {
     let connection;
     try {
-        connection = await pool.getConnection();
-        
-        let [folders] = await connection.execute('SELECT folder_id FROM Folders WHERE name = ? AND user_id = ?', [primaryKeyword, userId]);
-        let folderId;
-
-        if (folders.length > 0) {
-            folderId = folders[0].folder_id;
-        } else {
-            const [result] = await connection.execute('INSERT INTO Folders (user_id, name) VALUES (?, ?)', [userId, primaryKeyword]);
-            folderId = result.insertId;
+        const fileInfo = await getFileById(fileId);
+        if (!fileInfo) {
+            throw new Error('파일을 찾을 수 없습니다.');
         }
         
-        await connection.execute('UPDATE Notes SET folder_id = ? WHERE note_id = ? AND user_id = ?', [folderId, noteId, userId]);
-        console.log(`[Auto Folder] Note ID ${noteId} has been moved to folder '${primaryKeyword}' (ID: ${folderId}).`);
+        if (fileInfo.user_id !== userId) {
+            throw new Error('파일 삭제 권한이 없습니다.');
+        }
+        
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        
+        const [result] = await connection.execute(
+            'DELETE FROM files WHERE file_id = ? AND user_id = ?',
+            [fileId, userId]
+        );
+        
+        if (result.affectedRows === 0) {
+            throw new Error('파일 삭제에 실패했습니다.');
+        }
+        
+        try {
+            await fs.unlink(fileInfo.file_path);
+            console.log(`[deleteFile] 파일 삭제 완료: ${fileInfo.file_path}`);
+        } catch (fsError) {
+            console.warn(`[deleteFile] 물리적 파일 삭제 실패: ${fileInfo.file_path}`, fsError.message);
+        }
+        
+        await connection.commit();
+        return true;
+        
     } catch (error) {
-        console.error("자동 폴더 정리 중 에러 발생:", error);
+        if (connection) await connection.rollback();
+        throw error;
     } finally {
         if (connection) connection.release();
     }
 };
 
-
 module.exports = {
-    createFolder,
-    getFoldersByUserId,
-    updateFolder,
-    deleteFolder,
-    autoOrganizeNoteByKeywords // 👈 이 함수를 추가했습니다.
+    createFile,
+    getFileById,
+    getFilesByUserId,
+    deleteFile
 };

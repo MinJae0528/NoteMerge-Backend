@@ -1,61 +1,72 @@
 // src/services/noteService.js
 const { pool } = require('../config/database');
 
-// (비공개 헬퍼 함수) 노트에 대한 태그 처리
-const _handleNoteTags = async (connection, noteId, tagNames) => {
-    await connection.execute('DELETE FROM Note_Tag_Link WHERE note_id = ?', [noteId]);
-    if (!tagNames || tagNames.length === 0) {
+// (비공개 헬퍼 함수) 노트에 대한 키워드 처리
+const _handleNoteKeywords = async (connection, noteId, keywordNames) => {
+    await connection.execute('DELETE FROM note_keywords WHERE note_id = ?', [noteId]);
+    if (!keywordNames || keywordNames.length === 0) {
         return;
     }
-    for (const tagName of tagNames) {
-        const trimmedName = tagName.trim();
+    for (const keywordName of keywordNames) {
+        const trimmedName = keywordName.trim();
         if (!trimmedName) continue;
-        let [tagRows] = await connection.execute('SELECT tag_id FROM Tag WHERE name = ?', [trimmedName]);
-        let tagId;
-        if (tagRows.length === 0) {
-            const [insertResult] = await connection.execute('INSERT INTO Tag (name) VALUES (?)', [trimmedName]);
-            tagId = insertResult.insertId;
+        let [keywordRows] = await connection.execute('SELECT keyword_id FROM keywords WHERE name = ?', [trimmedName]);
+        let keywordId;
+        if (keywordRows.length === 0) {
+            const [insertResult] = await connection.execute('INSERT INTO keywords (name) VALUES (?)', [trimmedName]);
+            keywordId = insertResult.insertId;
         } else {
-            tagId = tagRows[0].tag_id;
+            keywordId = keywordRows[0].keyword_id;
         }
-        await connection.execute('INSERT INTO Note_Tag_Link (note_id, tag_id) VALUES (?, ?)', [noteId, tagId]);
+        await connection.execute('INSERT INTO note_keywords (note_id, keyword_id) VALUES (?, ?)', [noteId, keywordId]);
     }
 };
 
 // 노트 목록 조회
 const getNotesFromDB = async (userId, { folder_id, search, page = 1, limit = 20 }) => {
-    let query = `
-      SELECT n.note_id, n.title, n.summary, n.created_at, n.updated_at, n.folder_id,
-             f.name as folder_name, fi.file_id, fi.file_name, fi.file_type, fi.file_url,
-             GROUP_CONCAT(DISTINCT t.name ORDER BY t.name ASC SEPARATOR ',') as tags
-      FROM Note n
-      LEFT JOIN Folder f ON n.folder_id = f.folder_id
-      LEFT JOIN File fi ON n.file_id = fi.file_id
-      LEFT JOIN Note_Tag_Link ntl ON n.note_id = ntl.note_id
-      LEFT JOIN Tag t ON ntl.tag_id = t.tag_id
-      WHERE n.user_id = ?`;
-    const queryParams = [userId];
-    if (folder_id) { query += ' AND n.folder_id = ?'; queryParams.push(folder_id); }
-    if (search) {
-        query += ' AND (n.title LIKE ? OR n.content LIKE ? OR n.summary LIKE ?)';
-        const searchTerm = `%${search}%`;
-        queryParams.push(searchTerm, searchTerm, searchTerm);
+    try {
+        let query = `
+          SELECT n.note_id, n.title, n.summary, n.created_at, n.updated_at, n.folder_id,
+                 f.name as folder_name
+          FROM notes n
+          LEFT JOIN folders f ON n.folder_id = f.folder_id
+          WHERE n.user_id = ?`;
+        const queryParams = [userId];
+        
+        if (folder_id) { 
+            query += ' AND n.folder_id = ?'; 
+            queryParams.push(folder_id); 
+        }
+        
+        if (search) {
+            query += ' AND (n.title LIKE ? OR n.content LIKE ? OR n.summary LIKE ?)';
+            const searchTerm = `%${search}%`;
+            queryParams.push(searchTerm, searchTerm, searchTerm);
+        }
+        
+        query += ' ORDER BY n.created_at DESC LIMIT 20 OFFSET 0';
+        
+        const [notes] = await pool.execute(query, queryParams);
+        
+        let countQuery = `SELECT COUNT(*) as total FROM notes n WHERE n.user_id = ?`;
+        const countParams = [userId];
+        if (folder_id) { 
+            countQuery += ' AND n.folder_id = ?'; 
+            countParams.push(folder_id); 
+        }
+        if (search) {
+            countQuery += ' AND (n.title LIKE ? OR n.content LIKE ? OR n.summary LIKE ?)';
+            const searchTerm = `%${search}%`;
+            countParams.push(searchTerm, searchTerm, searchTerm);
+        }
+        
+        const [countResult] = await pool.execute(countQuery, countParams);
+        const total = countResult[0].total;
+        return { notes, total };
+        
+    } catch (error) {
+        throw error;
     }
-    query += ' GROUP BY n.note_id ORDER BY n.created_at DESC LIMIT ? OFFSET ?';
-    const offset = (page - 1) * limit;
-    queryParams.push(parseInt(limit), offset);
-    const [notes] = await pool.execute(query, queryParams);
-    let countQuery = `SELECT COUNT(DISTINCT n.note_id) as total FROM Note n WHERE n.user_id = ?`;
-    const countParams = [userId];
-    if (folder_id) { countQuery += ' AND n.folder_id = ?'; countParams.push(folder_id); }
-    if (search) {
-        countQuery += ' AND (n.title LIKE ? OR n.content LIKE ? OR n.summary LIKE ?)';
-        const searchTerm = `%${search}%`;
-        countParams.push(searchTerm, searchTerm, searchTerm);
-    }
-    const [countResult] = await pool.execute(countQuery, countParams);
-    const total = countResult[0].total;
-    return { notes, total };
 };
 
 // 노트 상세 조회
@@ -69,18 +80,17 @@ const getNoteById = async (noteId, userId) => {
                fi.storage_url as file_url, 
                fi.file_size, 
                fi.uploaded_at,
-               GROUP_CONCAT(DISTINCT t.tag_id, ':', t.name ORDER BY t.name ASC SEPARATOR ',') as tags
+               GROUP_CONCAT(DISTINCT k.keyword_id, ':', k.name ORDER BY k.name ASC SEPARATOR ',') as keywords
          FROM notes n
          LEFT JOIN files fi ON n.file_id = fi.file_id
          LEFT JOIN folders f ON fi.folder_id = f.folder_id
-         LEFT JOIN note_tag_link ntl ON n.note_id = ntl.note_id
-         LEFT JOIN tag t ON ntl.tag_id = t.tag_id
+         LEFT JOIN note_keywords nk ON n.note_id = nk.note_id
+         LEFT JOIN keywords k ON nk.keyword_id = k.keyword_id
          WHERE n.note_id = ? AND n.user_id = ?
          GROUP BY n.note_id`, [noteId, userId]
     );
     if (notes.length === 0) return null;
-    const [keywords] = await pool.execute('SELECT word, score FROM Keyword WHERE note_id = ? ORDER BY score DESC', [noteId]);
-    return { ...notes[0], keywords };
+    return notes[0];
 };
 
 // 노트 생성 (트랜잭션)
@@ -89,18 +99,14 @@ const createNoteInDB = async (noteData, aiData, keywordsData) => {
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-        const { userId, folder_id, fileId, title, content, tags } = noteData;
+        const { userId, folder_id, fileId, title, content, keywords } = noteData;
         const { summary, embedding } = aiData;
         const [result] = await connection.execute(
-            'INSERT INTO notes (user_id, file_id, title, content, summary, embedding) VALUES (?, ?, ?, ?, ?, ?)',
-            [userId, fileId, title || null, content, summary, embedding]
+            'INSERT INTO notes (user_id, file_id, folder_id, title, content, summary, embedding) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [userId, fileId, folder_id || null, title || null, content, summary, embedding]
         );
         const noteId = result.insertId;
-        await _handleNoteTags(connection, noteId, tags);
-        if (keywordsData && keywordsData.length > 0) {
-            const keywordValues = keywordsData.map(kw => [noteId, kw.word, kw.score]);
-            await connection.query('INSERT INTO Keyword (note_id, word, score) VALUES ?', [keywordValues]);
-        }
+        await _handleNoteKeywords(connection, noteId, keywords);
         await connection.commit();
         return { note_id: noteId };
     } catch (error) {
@@ -126,7 +132,7 @@ const updateNoteInDB = async (noteId, userId, noteData, aiData, keywordsData) =>
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-        const { title, content, folder_id, fileId, tags } = noteData;
+        const { title, content, folder_id, fileId, keywords } = noteData;
         const { summary, embedding } = aiData;
         const params = [
             title !== undefined ? title : null,
@@ -140,12 +146,7 @@ const updateNoteInDB = async (noteId, userId, noteData, aiData, keywordsData) =>
             'UPDATE notes SET title = ?, content = ?, summary = ?, embedding = ? WHERE note_id = ? AND user_id = ?',
             params
         );
-        await _handleNoteTags(connection, noteId, tags);
-        await connection.execute('DELETE FROM Keyword WHERE note_id = ?', [noteId]);
-        if (keywordsData && keywordsData.length > 0) {
-            const keywordValues = keywordsData.map(kw => [noteId, kw.word, kw.score]);
-            await connection.query('INSERT INTO Keyword (note_id, word, score) VALUES ?', [keywordValues]);
-        }
+        await _handleNoteKeywords(connection, noteId, keywords);
         await connection.commit();
     } catch (error) {
         if (connection) await connection.rollback();
@@ -167,10 +168,10 @@ const deleteNoteFromDB = async (noteId, userId) => {
         await connection.execute('DELETE FROM notes WHERE note_id = ?', [noteId]);
         let fileToDelete = null;
         if (fileIdToDelete) {
-            const [fileRecord] = await connection.execute('SELECT * FROM File WHERE file_id = ?', [fileIdToDelete]);
+            const [fileRecord] = await connection.execute('SELECT * FROM files WHERE file_id = ?', [fileIdToDelete]);
             if (fileRecord.length > 0) {
                 fileToDelete = fileRecord[0];
-                await connection.execute('DELETE FROM File WHERE file_id = ?', [fileIdToDelete]);
+                await connection.execute('DELETE FROM files WHERE file_id = ?', [fileIdToDelete]);
             }
         }
         await connection.commit();
@@ -191,7 +192,7 @@ const deleteNoteFromDB = async (noteId, userId) => {
  */
 const checkNoteExists = async (noteId, userId) => {
     const [rows] = await pool.execute(
-        'SELECT note_id FROM Notes WHERE note_id = ? AND user_id = ?', // 테이블명 Notes로 가정
+        'SELECT note_id FROM notes WHERE note_id = ? AND user_id = ?',
         [noteId, userId]
     );
     return rows.length > 0;
