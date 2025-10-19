@@ -4,6 +4,7 @@ const {
   getQuizzes,
   getQuiz,
   createQuiz,
+  createQuizFromNote,
   updateQuiz,
   deleteQuiz,
   addQuestion,
@@ -69,6 +70,11 @@ const submitSchema = Joi.object({
 
 // 모든 퀴즈 라우트는 인증 필요
 router.use(authenticateToken);
+
+// 퀴즈 생성 (수동)
+router.post('/', createQuiz);
+// 노트로부터 퀴즈 생성 (AI)
+router.post('/from-note/:noteId', createQuizFromNote);
 
 // 퀴즈 목록 조회
 router.get('/', getQuizzes);

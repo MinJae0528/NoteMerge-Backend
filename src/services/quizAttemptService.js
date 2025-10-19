@@ -61,14 +61,14 @@ const getQuizAttemptById = async (userId, attemptId) => {
  * 사용자가 제출한 답안을 채점하고 결과를 DB에 저장합니다.
  */
 const submitQuizAttempt = async (userId, quizId, answers) => {
-    const [questions] = await pool.execute('SELECT question_id, correct_answer, type, question_text FROM quiz_questions WHERE quiz_id = ?', [quizId]);
+    const [questions] = await pool.execute('SELECT question_id, correct_answer, question_type, question_text FROM quiz_questions WHERE quiz_id = ?', [quizId]);
     if (questions.length === 0) throw new Error('채점할 문제가 없는 퀴즈입니다.');
 
     let correctCount = 0;
     const results = [];
     questions.forEach(q => {
         const userAnswer = answers[q.question_id] || "";
-        const isCorrect = q.type === 'short_answer'
+        const isCorrect = q.question_type === 'short_answer'
             ? userAnswer.toLowerCase().trim() === q.correct_answer.toLowerCase().trim()
             : userAnswer === q.correct_answer;
         if (isCorrect) correctCount++;

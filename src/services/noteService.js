@@ -71,26 +71,34 @@ const getNotesFromDB = async (userId, { folder_id, search, page = 1, limit = 20 
 
 // 노트 상세 조회
 const getNoteById = async (noteId, userId) => {
-    const [notes] = await pool.execute(
-        `SELECT n.*, 
-               f.name as folder_name, 
-               fi.file_id, 
-               fi.original_name as file_name, 
-               fi.file_type, 
-               fi.storage_url as file_url, 
-               fi.file_size, 
-               fi.uploaded_at,
-               GROUP_CONCAT(DISTINCT k.keyword_id, ':', k.name ORDER BY k.name ASC SEPARATOR ',') as keywords
-         FROM notes n
-         LEFT JOIN files fi ON n.file_id = fi.file_id
-         LEFT JOIN folders f ON fi.folder_id = f.folder_id
-         LEFT JOIN note_keywords nk ON n.note_id = nk.note_id
-         LEFT JOIN keywords k ON nk.keyword_id = k.keyword_id
-         WHERE n.note_id = ? AND n.user_id = ?
-         GROUP BY n.note_id`, [noteId, userId]
-    );
-    if (notes.length === 0) return null;
-    return notes[0];
+    try {
+        const [notes] = await pool.execute(
+            `SELECT n.note_id, n.user_id, n.file_id, n.folder_id, n.title, n.content, 
+                    n.summary, n.created_at, n.updated_at
+             FROM notes n
+             WHERE n.note_id = ? AND n.user_id = ?`, 
+            [noteId, userId]
+        );
+        
+        if (notes.length === 0) return null;
+        
+        // 키워드 정보 별도로 조회
+        const [keywords] = await pool.execute(
+            `SELECT k.keyword_id, k.name 
+             FROM keywords k
+             JOIN note_keywords nk ON k.keyword_id = nk.keyword_id
+             WHERE nk.note_id = ?`,
+            [noteId]
+        );
+        
+        const note = notes[0];
+        note.keywords = keywords;
+        
+        return note;
+    } catch (error) {
+        console.error('getNoteById error:', error);
+        throw error;
+    }
 };
 
 // 노트 생성 (트랜잭션)
@@ -101,10 +109,15 @@ const createNoteInDB = async (noteData, aiData, keywordsData) => {
         await connection.beginTransaction();
         const { userId, folder_id, fileId, title, content, keywords } = noteData;
         const { summary, embedding } = aiData;
-        const [result] = await connection.execute(
-            'INSERT INTO notes (user_id, file_id, folder_id, title, content, summary, embedding) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [userId, fileId, folder_id || null, title || null, content, summary, embedding]
-        );
+        let sql, params;
+        if (fileId) {
+            sql = 'INSERT INTO notes (user_id, file_id, folder_id, title, content, summary, embedding) VALUES (?, ?, ?, ?, ?, ?, ?)';
+            params = [userId, fileId, folder_id || null, title || null, content, summary, embedding];
+        } else {
+            sql = 'INSERT INTO notes (user_id, folder_id, title, content, summary, embedding) VALUES (?, ?, ?, ?, ?, ?)';
+            params = [userId, folder_id || null, title || null, content, summary, embedding];
+        }
+        const [result] = await connection.execute(sql, params);
         const noteId = result.insertId;
         await _handleNoteKeywords(connection, noteId, keywords);
         await connection.commit();
