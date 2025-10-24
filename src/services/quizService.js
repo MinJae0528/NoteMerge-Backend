@@ -39,18 +39,41 @@ const getQuizDetailsById = async (userId, quizId) => {
     if (quizzes.length === 0) return null;
     
     const [questions] = await pool.execute('SELECT * FROM quiz_questions WHERE quiz_id = ?', [quizId]);
+    console.log('Raw questions from DB:', questions.map(q => ({ 
+        question_id: q.question_id, 
+        options: q.options, 
+        options_type: typeof q.options 
+    })));
+    
     return { 
         ...quizzes[0], 
         questions: questions.map(q => {
             let options = null;
+            console.log(`Processing question ${q.question_id}, raw options:`, q.options);
+            
             if (q.options) {
-                try {
-                    options = JSON.parse(q.options);
-                } catch (error) {
-                    console.error('JSON parse error for options:', q.options, error);
-                    options = null;
+                // options가 이미 배열인지 확인
+                if (Array.isArray(q.options)) {
+                    options = q.options;
+                    console.log(`✅ Options is already an array for question ${q.question_id}:`, options);
+                } else if (typeof q.options === 'string') {
+                    // 문자열인 경우에만 JSON 파싱 시도
+                    try {
+                        options = JSON.parse(q.options);
+                        console.log(`✅ JSON parsed successfully for question ${q.question_id}:`, options);
+                    } catch (error) {
+                        console.error(`❌ JSON parse error for question ${q.question_id}:`, q.options, error.message);
+                        options = null;
+                    }
+                } else {
+                    // 다른 타입의 객체인 경우 그대로 사용
+                    options = q.options;
+                    console.log(`✅ Using options as-is for question ${q.question_id}:`, options);
                 }
+            } else {
+                console.log(`⚠️ No options for question ${q.question_id}`);
             }
+            
             return { ...q, options };
         })
     };

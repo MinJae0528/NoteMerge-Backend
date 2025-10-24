@@ -71,7 +71,7 @@ const upload = multer({
   fileFilter: fileFilter,
   limits: {
     fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024, // 10MB
-    files: 1 // 한 번에 하나의 파일만
+    files: 5 // 한 번에 최대 5개 파일
   }
 });
 
@@ -90,7 +90,7 @@ const uploadSingle = (fieldName) => {
         if (err.code === 'LIMIT_FILE_COUNT') {
           return res.status(400).json({
             success: false,
-            message: '한 번에 하나의 파일만 업로드 가능합니다.'
+            message: '한 번에 최대 5개 파일까지 업로드 가능합니다.'
           });
         }
         return res.status(400).json({
@@ -105,6 +105,51 @@ const uploadSingle = (fieldName) => {
         });
       }
       next(); // 파일 업로드 성공 또는 파일 없음 (Multer 에러 아님)
+    });
+  };
+};
+
+// 다중 파일 업로드 미들웨어
+const uploadMultiple = (fieldName, maxCount = 5) => {
+  return (req, res, next) => {
+    console.log('=== 파일 업로드 미들웨어 시작 ===');
+    console.log('필드명:', fieldName, '최대 파일 수:', maxCount);
+    
+    upload.array(fieldName, maxCount)(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+        console.log('❌ Multer 에러:', err.code, err.message);
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({
+            success: false,
+            message: '파일 크기가 너무 큽니다. 최대 10MB까지 업로드 가능합니다.'
+          });
+        }
+        if (err.code === 'LIMIT_FILE_COUNT') {
+          return res.status(400).json({
+            success: false,
+            message: `한 번에 최대 ${maxCount}개 파일까지 업로드 가능합니다.`
+          });
+        }
+        return res.status(400).json({
+          success: false,
+          message: err.message
+        });
+      } else if (err) {
+        console.log('❌ 업로드 에러:', err.message);
+        return res.status(400).json({
+          success: false,
+          message: err.message
+        });
+      }
+      
+      console.log('✅ 파일 업로드 완료, 파일 수:', req.files?.length || 0);
+      if (req.files) {
+        req.files.forEach((file, index) => {
+          console.log(`파일 ${index + 1}: ${file.originalname} (${file.size} bytes)`);
+        });
+      }
+      
+      next();
     });
   };
 };
@@ -180,6 +225,7 @@ const getFileUrl = (req, filePath) => {
 
 module.exports = {
   uploadSingle,
+  uploadMultiple,
   deleteFile,
   getFileUrl,
   uploadDir,

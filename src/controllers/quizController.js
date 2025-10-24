@@ -18,14 +18,26 @@ const createQuizFromNote = async (req, res) => {
         }
         
         const textForQuiz = `${note.title}\n\n${note.content || ''}`;
-        console.log('퀴즈 생성용 텍스트 길이:', textForQuiz.length);
+        const summaryForQuiz = note.summary; // AI 요약이 있다면 사용
+        
+        // 퀴즈 생성용 텍스트 선택 (우선순위: 요약 + 원본, 원본만)
+        let quizSourceText;
+        if (summaryForQuiz && summaryForQuiz.length > 50) {
+            // AI 요약이 있으면 요약과 원본을 모두 사용
+            quizSourceText = `[요약]\n${summaryForQuiz}\n\n[전체 내용]\n${textForQuiz}`;
+            console.log('퀴즈 생성: AI 요약 + 원본 텍스트 사용, 총 길이:', quizSourceText.length);
+        } else {
+            // AI 요약이 없으면 원본만 사용
+            quizSourceText = textForQuiz;
+            console.log('퀴즈 생성: 원본 텍스트만 사용, 총 길이:', quizSourceText.length);
+        }
         
         let aiResult;
         
         try {
             // AI 서비스 시도
             console.log('AI 서비스로 퀴즈 생성 시도 중...');
-            aiResult = await aiService.generateQuizQuestions(textForQuiz);
+            aiResult = await aiService.generateQuizQuestions(quizSourceText);
             console.log('AI 퀴즈 생성 결과:', aiResult.success ? '성공' : '실패');
             console.log('AI 반환 questions:', JSON.stringify(aiResult.questions, null, 2));
         } catch (error) {
