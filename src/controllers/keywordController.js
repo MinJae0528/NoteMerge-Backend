@@ -85,6 +85,10 @@ const getKeywords = async (req, res) => {
     const userId = req.user.user_id;
     const { note_id } = req.query;
 
+    console.log('=== 키워드 조회 요청 ===');
+    console.log('사용자 ID:', userId);
+    console.log('노트 ID:', note_id);
+
     if (!note_id) {
       return res.status(400).json({
         success: false,
@@ -97,6 +101,8 @@ const getKeywords = async (req, res) => {
       'SELECT note_id FROM notes WHERE note_id = ? AND user_id = ?',
       [note_id, userId]
     );
+
+    console.log('노트 소유권 확인 결과:', notes.length > 0 ? '성공' : '실패');
 
     if (notes.length === 0) {
       return res.status(404).json({
@@ -114,6 +120,9 @@ const getKeywords = async (req, res) => {
        ORDER BY k.name ASC`,
       [note_id]
     );
+
+    console.log('조회된 키워드 수:', keywords.length);
+    console.log('키워드 목록:', keywords);
 
     res.json({
       success: true,

@@ -22,35 +22,61 @@ class AIService {
    * AI 모델 연결 테스트
    */
   async testConnection() {
+    // 먼저 사용 가능한 모델 목록을 확인해보기
+    try {
+      console.log('🔍 사용 가능한 모델 목록 확인 중...');
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models?key=' + process.env.GEMINI_API_KEY);
+      if (response.ok) {
+        const data = await response.json();
+        const availableModels = data.models?.map(m => m.name) || [];
+        console.log('📋 사용 가능한 모델들:', availableModels.slice(0, 5)); // 처음 5개만 표시
+      }
+    } catch (error) {
+      console.log('⚠️ 모델 목록 조회 실패, 기본 모델로 시도');
+    }
+
     const modelsToTry = [
-      'gemini-2.0-flash-exp',  // 이전에 잘 작동했던 모델
-      'gemini-1.5-flash-latest',
-      'gemini-1.5-pro-latest',
-      'gemini-1.5-flash',
-      'gemini-1.5-pro'
+      'models/gemini-2.5-flash',
+      'models/gemini-2.5-pro-preview-03-25',
+      'models/gemini-2.5-flash-preview-05-20',
+      'models/gemini-2.5-flash-lite-preview-06-17'
     ];
 
     for (const model of modelsToTry) {
       try {
         console.log(`🧪 Testing model: ${model}`);
         const genModel = this.genAI.getGenerativeModel({ model });
-        const result = await genModel.generateContent("Hello, test connection");
+        const result = await genModel.generateContent("안녕하세요");
         const response = await result.response;
-        console.log(`✅ AI 모델 연결 성공: ${model}`);
-        this.workingModel = model; // 성공한 모델 저장
-        this.textGenModel = genModel; // 성공한 모델 객체 저장
-        return;
+        const text = response.text();
+        if (text && text.length > 0) {
+          console.log(`✅ AI 모델 연결 성공: ${model}`);
+          this.workingModel = model; // 성공한 모델 저장
+          this.textGenModel = genModel; // 성공한 모델 객체 저장
+          return;
+        }
       } catch (error) {
-        console.log(`❌ ${model} 실패:`, error.message);
+        console.log(`❌ ${model} 실패:`, error.message.substring(0, 100) + '...');
         continue;
       }
     }
     
-    console.error("❌ 모든 AI 모델 연결 실패");
+    // 모든 모델 실패 시에도 기본 모델로 설정 (기능 제한적으로라도 동작)
+    console.error("❌ 모든 AI 모델 연결 실패, 기본 모델로 설정");
+    try {
+      this.workingModel = 'models/gemini-2.5-flash';
+      this.textGenModel = this.genAI.getGenerativeModel({ model: 'models/gemini-2.5-flash' });
+      console.log("🔄 기본 모델(models/gemini-2.5-flash)로 설정 완료");
+    } catch (fallbackError) {
+      console.error("❌ 기본 모델 설정도 실패:", fallbackError.message);
+      this.textGenModel = null;
+    }
+    
     console.warn("🔧 다음 사항을 확인해주세요:");
     console.warn("   1. GEMINI_API_KEY가 올바른지 확인");
     console.warn("   2. API 키에 충분한 권한이 있는지 확인");
     console.warn("   3. 네트워크 연결 상태 확인");
+    console.warn("   4. Google AI Studio에서 API 사용 설정 확인");
   }
 
   /**

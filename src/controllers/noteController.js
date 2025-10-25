@@ -134,6 +134,13 @@ const createNote = async (req, res) => {
         // fileId를 첫 번째 파일의 ID로 설정 (기존 스키마 호환성)
         const primaryFileId = fileIds.length > 0 ? fileIds[0] : null;
         const noteData = { userId: req.user.user_id, folder_id, fileId: primaryFileId, title, content: finalContent, tags: tagsData };
+        
+        console.log('노트 생성 직전 키워드 확인:', {
+            keywordsData: keywordsData,
+            keywordsLength: keywordsData ? keywordsData.length : 0,
+            aiDataSummary: aiData.summary ? aiData.summary.substring(0, 50) + '...' : 'null'
+        });
+        
         const newNote = await noteService.createNoteInDB(noteData, aiData, keywordsData);
         
         if (keywordsData.length > 0) {

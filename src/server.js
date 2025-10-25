@@ -25,10 +25,12 @@ const noteLinkRoutes = require('./routes/noteLinks');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS 설정
+// CORS 설정 - 프론트엔드에서 iframe 사용 허용
 app.use(cors({
-  origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*',
-  credentials: true
+  origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : ['http://localhost:3001', 'https://localhost:3001'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
 // ▼▼▼ Body parsing 미들웨어를 이 위치로 옮겼습니다 ▼▼▼
@@ -36,8 +38,11 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 보안 미들웨어
-app.use(helmet());
+// 보안 미들웨어 - iframe 지원을 위해 CSP 비활성화
+app.use(helmet({
+  contentSecurityPolicy: false,
+  frameguard: false
+}));
 
 // 압축 미들웨어
 app.use(compression());
@@ -57,7 +62,16 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // 정적 파일 서빙: upload.js에서 정의한 uploadDir 사용
-app.use('/uploads', express.static(uploadDir));
+app.use('/uploads', express.static(uploadDir, {
+  setHeaders: (res, path) => {
+    if (path.endsWith('.pdf')) {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'inline');
+      res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+      res.setHeader('Cross-Origin-Embedder-Policy', 'cross-origin');
+    }
+  }
+}));
 
 // Health check 엔드포인트
 app.get('/health', (req, res) => {

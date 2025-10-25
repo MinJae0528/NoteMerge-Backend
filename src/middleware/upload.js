@@ -34,13 +34,21 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     // 고유한 파일명 생성: timestamp_userId_originalName
-    // req.user는 authMiddleware를 거쳐야 있으므로, 미들웨어 순서가 중요합니다.
-    // 현재 notes.js 라우트에서 authMiddleware가 먼저 실행되므로 req.user는 존재할 것입니다.
-    const userId = req.user && req.user.user_id ? req.user.user_id : 'anonymous'; // 안전하게 userId 확인
+    const userId = req.user && req.user.user_id ? req.user.user_id : 'anonymous';
     const uniqueSuffix = Date.now() + '_' + userId;
     const ext = path.extname(file.originalname);
-    const name = path.basename(file.originalname, ext);
-    cb(null, `${uniqueSuffix}_${name}${ext}`);
+    const originalName = path.basename(file.originalname, ext);
+    
+    // 한글 파일명을 안전한 영문으로 변환
+    const safeName = originalName
+      .replace(/[^\w\s-]/g, '') // 특수문자 제거 (한글 포함)
+      .replace(/\s+/g, '_')     // 공백을 언더스코어로
+      .toLowerCase();           // 소문자로 변환
+    
+    // 파일명이 비어있으면 기본명 사용
+    const finalName = safeName || 'file';
+    
+    cb(null, `${uniqueSuffix}_${finalName}${ext}`);
   }
 });
 
@@ -218,8 +226,11 @@ const getFileUrl = (req, filePath) => {
   // 상대 경로의 역슬래시를 슬래시로 변환 (URL 형식)
   const urlPath = relativeToUploads.replace(/\\/g, '/');
 
+  // URL 인코딩을 통해 한글 파일명 문제 해결
+  const encodedUrlPath = encodeURI(urlPath);
+
   // 최종 URL 구성
-  return `${baseUrl}/uploads/${urlPath}`;
+  return `${baseUrl}/uploads/${encodedUrlPath}`;
 };
 
 

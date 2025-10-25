@@ -91,8 +91,22 @@ const getNoteById = async (noteId, userId) => {
             [noteId]
         );
         
+        // 파일 정보 별도로 조회 (현재 스키마에서는 note의 file_id 사용)
+        let files = [];
+        if (notes[0].file_id) {
+            const [fileResult] = await pool.execute(
+                `SELECT f.file_id, f.original_name as fileName, f.storage_url as fileUrl, 
+                        f.file_size as fileSize, f.file_type as fileType, f.uploaded_at as created_at
+                 FROM files f
+                 WHERE f.file_id = ?`,
+                [notes[0].file_id]
+            );
+            files = fileResult;
+        }
+        
         const note = notes[0];
         note.keywords = keywords;
+        note.files = files;
         
         return note;
     } catch (error) {
@@ -109,6 +123,17 @@ const createNoteInDB = async (noteData, aiData, keywordsData) => {
         await connection.beginTransaction();
         const { userId, folder_id, fileId, title, content, keywords } = noteData;
         const { summary, embedding } = aiData;
+        
+        // AI 키워드를 우선 사용하고, 없으면 사용자 입력 키워드 사용
+        const finalKeywords = keywordsData && keywordsData.length > 0 ? 
+            keywordsData.map(kw => kw.word || kw) : 
+            (keywords || []);
+        
+        console.log('키워드 저장 준비:', {
+            aiKeywords: keywordsData,
+            userKeywords: keywords,
+            finalKeywords: finalKeywords
+        });
         let sql, params;
         if (fileId) {
             sql = 'INSERT INTO notes (user_id, file_id, folder_id, title, content, summary, embedding) VALUES (?, ?, ?, ?, ?, ?, ?)';
@@ -119,7 +144,15 @@ const createNoteInDB = async (noteData, aiData, keywordsData) => {
         }
         const [result] = await connection.execute(sql, params);
         const noteId = result.insertId;
-        await _handleNoteKeywords(connection, noteId, keywords);
+        
+        // AI 키워드 또는 사용자 키워드 저장
+        await _handleNoteKeywords(connection, noteId, finalKeywords);
+        
+        console.log('키워드 저장 완료:', {
+            noteId: noteId,
+            savedKeywords: finalKeywords
+        });
+        
         await connection.commit();
         return { note_id: noteId };
     } catch (error) {
