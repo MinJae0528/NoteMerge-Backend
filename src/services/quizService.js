@@ -1,16 +1,25 @@
 const { pool } = require('../config/database');
 
 const getQuizzesFromDB = async (userId, { note_id, page = 1, limit = 20 }) => {
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 20;
+    const offset = (pageNum - 1) * limitNum;
+    
+    console.log('getQuizzesFromDB 파라미터:', { userId, note_id, pageNum, limitNum, offset });
+    
     let query = `
-      SELECT q.quiz_id, q.title, q.created_at, n.note_id, n.title as note_title, COUNT(qq.question_id) as question_count
+      SELECT q.quiz_id, q.title, q.created_at, n.note_id, n.title as note_title,
+             (SELECT COUNT(*) FROM quiz_questions qq WHERE qq.quiz_id = q.quiz_id) as question_count
       FROM quizzes q
       INNER JOIN notes n ON q.note_id = n.note_id
-      LEFT JOIN quiz_questions qq ON q.quiz_id = qq.quiz_id
       WHERE n.user_id = ?`;
     const params = [userId];
     if (note_id) { query += ' AND q.note_id = ?'; params.push(note_id); }
-    query += ' GROUP BY q.quiz_id ORDER BY q.created_at DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), (page - 1) * limit);
+    query += ` ORDER BY q.created_at DESC LIMIT ${limitNum} OFFSET ${offset}`;
+    // params.push(limitNum, offset); // LIMIT/OFFSET을 직접 삽입으로 변경
+    
+    console.log('SQL 쿼리 파라미터:', params);
+    console.log('실행할 쿼리:', query);
     const [quizzes] = await pool.execute(query, params);
 
     let countQuery = 'SELECT COUNT(*) as total FROM quizzes q INNER JOIN notes n ON q.note_id = n.note_id WHERE n.user_id = ?';
@@ -30,7 +39,44 @@ const getQuizDetailsById = async (userId, quizId) => {
     if (quizzes.length === 0) return null;
     
     const [questions] = await pool.execute('SELECT * FROM quiz_questions WHERE quiz_id = ?', [quizId]);
-    return { ...quizzes[0], questions: questions.map(q => ({...q, options: q.options ? JSON.parse(q.options) : null})) };
+    console.log('Raw questions from DB:', questions.map(q => ({ 
+        question_id: q.question_id, 
+        options: q.options, 
+        options_type: typeof q.options 
+    })));
+    
+    return { 
+        ...quizzes[0], 
+        questions: questions.map(q => {
+            let options = null;
+            console.log(`Processing question ${q.question_id}, raw options:`, q.options);
+            
+            if (q.options) {
+                // options가 이미 배열인지 확인
+                if (Array.isArray(q.options)) {
+                    options = q.options;
+                    console.log(`✅ Options is already an array for question ${q.question_id}:`, options);
+                } else if (typeof q.options === 'string') {
+                    // 문자열인 경우에만 JSON 파싱 시도
+                    try {
+                        options = JSON.parse(q.options);
+                        console.log(`✅ JSON parsed successfully for question ${q.question_id}:`, options);
+                    } catch (error) {
+                        console.error(`❌ JSON parse error for question ${q.question_id}:`, q.options, error.message);
+                        options = null;
+                    }
+                } else {
+                    // 다른 타입의 객체인 경우 그대로 사용
+                    options = q.options;
+                    console.log(`✅ Using options as-is for question ${q.question_id}:`, options);
+                }
+            } else {
+                console.log(`⚠️ No options for question ${q.question_id}`);
+            }
+            
+            return { ...q, options };
+        })
+    };
 };
 
 const createQuizInDB = async (userId, noteId, title, questions) => {
@@ -39,11 +85,20 @@ const createQuizInDB = async (userId, noteId, title, questions) => {
         connection = await pool.getConnection();
         await connection.beginTransaction();
 
+        // quizzes 테이블에 user_id가 있으므로 포함
         const [quizResult] = await connection.execute('INSERT INTO quizzes (note_id, user_id, title) VALUES (?, ?, ?)', [noteId, userId, title]);
         const quizId = quizResult.insertId;
 
         if (questions && questions.length > 0) {
-            const questionValues = questions.map(q => [quizId, q.question, q.type, JSON.stringify(q.options), q.correct_answer]);
+            console.log('퀴즈 문제 저장 중:', questions);
+            const questionValues = questions.map(q => [
+                quizId, 
+                q.question || q.question_text, 
+                q.type || q.question_type, 
+                JSON.stringify(q.options || []), 
+                q.correct_answer
+            ]);
+            console.log('변환된 question values:', questionValues);
             await connection.query('INSERT INTO quiz_questions (quiz_id, question_text, question_type, options, correct_answer) VALUES ?', [questionValues]);
         }
         

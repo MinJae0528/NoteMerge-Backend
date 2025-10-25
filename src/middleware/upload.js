@@ -34,13 +34,21 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     // 고유한 파일명 생성: timestamp_userId_originalName
-    // req.user는 authMiddleware를 거쳐야 있으므로, 미들웨어 순서가 중요합니다.
-    // 현재 notes.js 라우트에서 authMiddleware가 먼저 실행되므로 req.user는 존재할 것입니다.
-    const userId = req.user && req.user.user_id ? req.user.user_id : 'anonymous'; // 안전하게 userId 확인
+    const userId = req.user && req.user.user_id ? req.user.user_id : 'anonymous';
     const uniqueSuffix = Date.now() + '_' + userId;
     const ext = path.extname(file.originalname);
-    const name = path.basename(file.originalname, ext);
-    cb(null, `${uniqueSuffix}_${name}${ext}`);
+    const originalName = path.basename(file.originalname, ext);
+    
+    // 한글 파일명을 안전한 영문으로 변환
+    const safeName = originalName
+      .replace(/[^\w\s-]/g, '') // 특수문자 제거 (한글 포함)
+      .replace(/\s+/g, '_')     // 공백을 언더스코어로
+      .toLowerCase();           // 소문자로 변환
+    
+    // 파일명이 비어있으면 기본명 사용
+    const finalName = safeName || 'file';
+    
+    cb(null, `${uniqueSuffix}_${finalName}${ext}`);
   }
 });
 
@@ -71,7 +79,7 @@ const upload = multer({
   fileFilter: fileFilter,
   limits: {
     fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024, // 10MB
-    files: 1 // 한 번에 하나의 파일만
+    files: 5 // 한 번에 최대 5개 파일
   }
 });
 
@@ -90,7 +98,7 @@ const uploadSingle = (fieldName) => {
         if (err.code === 'LIMIT_FILE_COUNT') {
           return res.status(400).json({
             success: false,
-            message: '한 번에 하나의 파일만 업로드 가능합니다.'
+            message: '한 번에 최대 5개 파일까지 업로드 가능합니다.'
           });
         }
         return res.status(400).json({
@@ -105,6 +113,51 @@ const uploadSingle = (fieldName) => {
         });
       }
       next(); // 파일 업로드 성공 또는 파일 없음 (Multer 에러 아님)
+    });
+  };
+};
+
+// 다중 파일 업로드 미들웨어
+const uploadMultiple = (fieldName, maxCount = 5) => {
+  return (req, res, next) => {
+    console.log('=== 파일 업로드 미들웨어 시작 ===');
+    console.log('필드명:', fieldName, '최대 파일 수:', maxCount);
+    
+    upload.array(fieldName, maxCount)(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+        console.log('❌ Multer 에러:', err.code, err.message);
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({
+            success: false,
+            message: '파일 크기가 너무 큽니다. 최대 10MB까지 업로드 가능합니다.'
+          });
+        }
+        if (err.code === 'LIMIT_FILE_COUNT') {
+          return res.status(400).json({
+            success: false,
+            message: `한 번에 최대 ${maxCount}개 파일까지 업로드 가능합니다.`
+          });
+        }
+        return res.status(400).json({
+          success: false,
+          message: err.message
+        });
+      } else if (err) {
+        console.log('❌ 업로드 에러:', err.message);
+        return res.status(400).json({
+          success: false,
+          message: err.message
+        });
+      }
+      
+      console.log('✅ 파일 업로드 완료, 파일 수:', req.files?.length || 0);
+      if (req.files) {
+        req.files.forEach((file, index) => {
+          console.log(`파일 ${index + 1}: ${file.originalname} (${file.size} bytes)`);
+        });
+      }
+      
+      next();
     });
   };
 };
@@ -173,13 +226,17 @@ const getFileUrl = (req, filePath) => {
   // 상대 경로의 역슬래시를 슬래시로 변환 (URL 형식)
   const urlPath = relativeToUploads.replace(/\\/g, '/');
 
+  // URL 인코딩을 통해 한글 파일명 문제 해결
+  const encodedUrlPath = encodeURI(urlPath);
+
   // 최종 URL 구성
-  return `${baseUrl}/uploads/${urlPath}`;
+  return `${baseUrl}/uploads/${encodedUrlPath}`;
 };
 
 
 module.exports = {
   uploadSingle,
+  uploadMultiple,
   deleteFile,
   getFileUrl,
   uploadDir,

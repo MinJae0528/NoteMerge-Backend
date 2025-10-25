@@ -1,97 +1,118 @@
 // src/services/noteService.js
 const { pool } = require('../config/database');
 
-// (비공개 헬퍼 함수) 노트에 대한 태그 처리
-const _handleNoteTags = async (connection, noteId, tagNames) => {
-    // 기존 태그 연결 삭제
-    await connection.execute('DELETE FROM Note_Tag_Link WHERE note_id = ?', [noteId]);
-    
-    // 새 태그가 없으면 여기서 종료
-    if (!tagNames || tagNames.length === 0) {
+// (비공개 헬퍼 함수) 노트에 대한 키워드 처리
+const _handleNoteKeywords = async (connection, noteId, keywordNames) => {
+    await connection.execute('DELETE FROM note_keywords WHERE note_id = ?', [noteId]);
+    if (!keywordNames || keywordNames.length === 0) {
         return;
     }
-    
-    // 새 태그들을 순회하며 연결
-    for (const tagName of tagNames) {
-        const trimmedName = tagName.trim();
-        if (!trimmedName) continue; // 빈 태그는 무시
-
-        // 태그가 이미 존재하는지 확인
-        let [tagRows] = await connection.execute('SELECT tag_id FROM Tag WHERE name = ?', [trimmedName]);
-        let tagId;
-
-        if (tagRows.length === 0) {
-            // 존재하지 않으면 새로 생성
-            const [insertResult] = await connection.execute('INSERT INTO Tag (name) VALUES (?)', [trimmedName]);
-            tagId = insertResult.insertId;
+    for (const keywordName of keywordNames) {
+        const trimmedName = keywordName.trim();
+        if (!trimmedName) continue;
+        let [keywordRows] = await connection.execute('SELECT keyword_id FROM keywords WHERE name = ?', [trimmedName]);
+        let keywordId;
+        if (keywordRows.length === 0) {
+            const [insertResult] = await connection.execute('INSERT INTO keywords (name) VALUES (?)', [trimmedName]);
+            keywordId = insertResult.insertId;
         } else {
-            // 존재하면 기존 ID 사용
-            tagId = tagRows[0].tag_id;
+            keywordId = keywordRows[0].keyword_id;
         }
-        
-        // 노트와 태그 연결
-        await connection.execute('INSERT INTO Note_Tag_Link (note_id, tag_id) VALUES (?, ?)', [noteId, tagId]);
+        await connection.execute('INSERT INTO note_keywords (note_id, keyword_id) VALUES (?, ?)', [noteId, keywordId]);
     }
 };
 
 // 노트 목록 조회
 const getNotesFromDB = async (userId, { folder_id, search, page = 1, limit = 20 }) => {
-    let query = `
-      SELECT n.note_id, n.title, n.summary, n.created_at, n.updated_at, n.folder_id,
-             f.name as folder_name, fi.file_id, fi.file_name, fi.file_type, fi.file_url,
-             GROUP_CONCAT(DISTINCT t.name ORDER BY t.name ASC SEPARATOR ',') as tags
-      FROM Note n
-      LEFT JOIN Folder f ON n.folder_id = f.folder_id
-      LEFT JOIN File fi ON n.file_id = fi.file_id
-      LEFT JOIN Note_Tag_Link ntl ON n.note_id = ntl.note_id
-      LEFT JOIN Tag t ON ntl.tag_id = t.tag_id
-      WHERE n.user_id = ?`;
-    const queryParams = [userId];
-
-    if (folder_id) { query += ' AND n.folder_id = ?'; queryParams.push(folder_id); }
-    if (search) {
-        query += ' AND (n.title LIKE ? OR n.content LIKE ? OR n.summary LIKE ?)';
-        const searchTerm = `%${search}%`;
-        queryParams.push(searchTerm, searchTerm, searchTerm);
+    try {
+        let query = `
+          SELECT n.note_id, n.title, n.summary, n.created_at, n.updated_at, n.folder_id,
+                 f.name as folder_name
+          FROM notes n
+          LEFT JOIN folders f ON n.folder_id = f.folder_id
+          WHERE n.user_id = ?`;
+        const queryParams = [userId];
+        
+        if (folder_id) { 
+            query += ' AND n.folder_id = ?'; 
+            queryParams.push(folder_id); 
+        }
+        
+        if (search) {
+            query += ' AND (n.title LIKE ? OR n.content LIKE ? OR n.summary LIKE ?)';
+            const searchTerm = `%${search}%`;
+            queryParams.push(searchTerm, searchTerm, searchTerm);
+        }
+        
+        query += ' ORDER BY n.created_at DESC LIMIT 20 OFFSET 0';
+        
+        const [notes] = await pool.execute(query, queryParams);
+        
+        let countQuery = `SELECT COUNT(*) as total FROM notes n WHERE n.user_id = ?`;
+        const countParams = [userId];
+        if (folder_id) { 
+            countQuery += ' AND n.folder_id = ?'; 
+            countParams.push(folder_id); 
+        }
+        if (search) {
+            countQuery += ' AND (n.title LIKE ? OR n.content LIKE ? OR n.summary LIKE ?)';
+            const searchTerm = `%${search}%`;
+            countParams.push(searchTerm, searchTerm, searchTerm);
+        }
+        
+        const [countResult] = await pool.execute(countQuery, countParams);
+        const total = countResult[0].total;
+        return { notes, total };
+        
+    } catch (error) {
+        throw error;
     }
-    
-    query += ' GROUP BY n.note_id ORDER BY n.created_at DESC LIMIT ? OFFSET ?';
-    const offset = (page - 1) * limit;
-    queryParams.push(parseInt(limit), offset);
-    
-    const [notes] = await pool.execute(query, queryParams);
-    
-    let countQuery = `SELECT COUNT(DISTINCT n.note_id) as total FROM Note n WHERE n.user_id = ?`;
-    const countParams = [userId];
-    if (folder_id) { countQuery += ' AND n.folder_id = ?'; countParams.push(folder_id); }
-    if (search) {
-        countQuery += ' AND (n.title LIKE ? OR n.content LIKE ? OR n.summary LIKE ?)';
-        const searchTerm = `%${search}%`;
-        countParams.push(searchTerm, searchTerm, searchTerm);
-    }
-    const [countResult] = await pool.execute(countQuery, countParams);
-    const total = countResult[0].total;
-
-    return { notes, total };
 };
 
 // 노트 상세 조회
 const getNoteById = async (noteId, userId) => {
-    const [notes] = await pool.execute(
-        `SELECT n.*, f.name as folder_name, fi.file_id, fi.file_name, fi.file_type, fi.file_url, fi.file_size, fi.uploaded_at,
-                GROUP_CONCAT(DISTINCT t.tag_id, ':', t.name ORDER BY t.name ASC SEPARATOR ',') as tags
-         FROM Note n
-         LEFT JOIN Folder f ON n.folder_id = f.folder_id
-         LEFT JOIN File fi ON n.file_id = fi.file_id
-         LEFT JOIN Note_Tag_Link ntl ON n.note_id = ntl.note_id
-         LEFT JOIN Tag t ON ntl.tag_id = t.tag_id
-         WHERE n.note_id = ? AND n.user_id = ?
-         GROUP BY n.note_id`, [noteId, userId]
-    );
-    if (notes.length === 0) return null;
-    
-    const [keywords] = await pool.execute('SELECT word, score FROM Keyword WHERE note_id = ? ORDER BY score DESC', [noteId]);
-    return { ...notes[0], keywords };
+    try {
+        const [notes] = await pool.execute(
+            `SELECT n.note_id, n.user_id, n.file_id, n.folder_id, n.title, n.content, 
+                    n.summary, n.created_at, n.updated_at
+             FROM notes n
+             WHERE n.note_id = ? AND n.user_id = ?`, 
+            [noteId, userId]
+        );
+        
+        if (notes.length === 0) return null;
+        
+        // 키워드 정보 별도로 조회
+        const [keywords] = await pool.execute(
+            `SELECT k.keyword_id, k.name 
+             FROM keywords k
+             JOIN note_keywords nk ON k.keyword_id = nk.keyword_id
+             WHERE nk.note_id = ?`,
+            [noteId]
+        );
+        
+        // 파일 정보 별도로 조회 (현재 스키마에서는 note의 file_id 사용)
+        let files = [];
+        if (notes[0].file_id) {
+            const [fileResult] = await pool.execute(
+                `SELECT f.file_id, f.original_name as fileName, f.storage_url as fileUrl, 
+                        f.file_size as fileSize, f.file_type as fileType, f.uploaded_at as created_at
+                 FROM files f
+                 WHERE f.file_id = ?`,
+                [notes[0].file_id]
+            );
+            files = fileResult;
+        }
+        
+        const note = notes[0];
+        note.keywords = keywords;
+        note.files = files;
+        
+        return note;
+    } catch (error) {
+        console.error('getNoteById error:', error);
+        throw error;
+    }
 };
 
 // 노트 생성 (트랜잭션)
@@ -100,22 +121,37 @@ const createNoteInDB = async (noteData, aiData, keywordsData) => {
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-
-        const { userId, folder_id, fileId, title, content, tags } = noteData;
+        const { userId, folder_id, fileId, title, content, keywords } = noteData;
         const { summary, embedding } = aiData;
         
-        const [result] = await connection.execute(
-            'INSERT INTO Note (user_id, folder_id, file_id, title, content, summary, embedding) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [userId, folder_id || null, fileId, title || null, content, summary, embedding]
-        );
-        const noteId = result.insertId;
-
-        await _handleNoteTags(connection, noteId, tags);
-
-        if (keywordsData && keywordsData.length > 0) {
-            const keywordValues = keywordsData.map(kw => [noteId, kw.word, kw.score]);
-            await connection.query('INSERT INTO Keyword (note_id, word, score) VALUES ?', [keywordValues]);
+        // AI 키워드를 우선 사용하고, 없으면 사용자 입력 키워드 사용
+        const finalKeywords = keywordsData && keywordsData.length > 0 ? 
+            keywordsData.map(kw => kw.word || kw) : 
+            (keywords || []);
+        
+        console.log('키워드 저장 준비:', {
+            aiKeywords: keywordsData,
+            userKeywords: keywords,
+            finalKeywords: finalKeywords
+        });
+        let sql, params;
+        if (fileId) {
+            sql = 'INSERT INTO notes (user_id, file_id, folder_id, title, content, summary, embedding) VALUES (?, ?, ?, ?, ?, ?, ?)';
+            params = [userId, fileId, folder_id || null, title || null, content, summary, embedding];
+        } else {
+            sql = 'INSERT INTO notes (user_id, folder_id, title, content, summary, embedding) VALUES (?, ?, ?, ?, ?, ?)';
+            params = [userId, folder_id || null, title || null, content, summary, embedding];
         }
+        const [result] = await connection.execute(sql, params);
+        const noteId = result.insertId;
+        
+        // AI 키워드 또는 사용자 키워드 저장
+        await _handleNoteKeywords(connection, noteId, finalKeywords);
+        
+        console.log('키워드 저장 완료:', {
+            noteId: noteId,
+            savedKeywords: finalKeywords
+        });
         
         await connection.commit();
         return { note_id: noteId };
@@ -129,8 +165,11 @@ const createNoteInDB = async (noteData, aiData, keywordsData) => {
 
 // 노트 수정을 위한 기존 노트 정보 조회
 const findNoteForUpdate = async (noteId, userId) => {
-    const [notes] = await pool.execute('SELECT file_id, title, content, summary, embedding FROM Note WHERE note_id = ? AND user_id = ?', [noteId, userId]);
-    return notes[0];
+    const [rows] = await pool.execute(
+        'SELECT file_id, title, content, summary, embedding FROM notes WHERE note_id = ? AND user_id = ?',
+        [noteId, userId]
+    );
+    return rows[0];
 };
 
 // 노트 업데이트 (트랜잭션)
@@ -139,26 +178,21 @@ const updateNoteInDB = async (noteId, userId, noteData, aiData, keywordsData) =>
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-        
-        const { title, content, folder_id, fileId, tags } = noteData;
+        const { title, content, folder_id, fileId, keywords } = noteData;
         const { summary, embedding } = aiData;
-
-        const sql = `
-            UPDATE Note SET
-                title = ?, content = ?, folder_id = ?, file_id = ?,
-                summary = ?, embedding = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE note_id = ? AND user_id = ?`;
-        
-        await connection.execute(sql, [title, content, folder_id, fileId, summary, embedding, noteId, userId]);
-        
-        await _handleNoteTags(connection, noteId, tags);
-        
-        await connection.execute('DELETE FROM Keyword WHERE note_id = ?', [noteId]);
-        if (keywordsData && keywordsData.length > 0) {
-            const keywordValues = keywordsData.map(kw => [noteId, kw.word, kw.score]);
-            await connection.query('INSERT INTO Keyword (note_id, word, score) VALUES ?', [keywordValues]);
-        }
-
+        const params = [
+            title !== undefined ? title : null,
+            content !== undefined ? content : null,
+            summary !== undefined ? summary : null,
+            embedding !== undefined ? embedding : null,
+            noteId,
+            userId
+        ];
+        await pool.execute(
+            'UPDATE notes SET title = ?, content = ?, summary = ?, embedding = ? WHERE note_id = ? AND user_id = ?',
+            params
+        );
+        await _handleNoteKeywords(connection, noteId, keywords);
         await connection.commit();
     } catch (error) {
         if (connection) await connection.rollback();
@@ -174,23 +208,18 @@ const deleteNoteFromDB = async (noteId, userId) => {
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-
-        const [notes] = await connection.execute('SELECT file_id FROM Note WHERE note_id = ? AND user_id = ?', [noteId, userId]);
+        const [notes] = await connection.execute('SELECT file_id FROM notes WHERE note_id = ? AND user_id = ?', [noteId, userId]);
         if (notes.length === 0) throw new Error('삭제할 노트를 찾을 수 없습니다.');
-        
         const fileIdToDelete = notes[0].file_id;
-        
-        await connection.execute('DELETE FROM Note WHERE note_id = ?', [noteId]);
-
+        await connection.execute('DELETE FROM notes WHERE note_id = ?', [noteId]);
         let fileToDelete = null;
         if (fileIdToDelete) {
-            const [fileRecord] = await connection.execute('SELECT * FROM File WHERE file_id = ?', [fileIdToDelete]);
+            const [fileRecord] = await connection.execute('SELECT * FROM files WHERE file_id = ?', [fileIdToDelete]);
             if (fileRecord.length > 0) {
                 fileToDelete = fileRecord[0];
-                await connection.execute('DELETE FROM File WHERE file_id = ?', [fileIdToDelete]);
+                await connection.execute('DELETE FROM files WHERE file_id = ?', [fileIdToDelete]);
             }
         }
-        
         await connection.commit();
         return fileToDelete;
     } catch (error) {
@@ -201,11 +230,28 @@ const deleteNoteFromDB = async (noteId, userId) => {
     }
 };
 
+/**
+ * 특정 노트가 존재하는지, 그리고 해당 사용자의 소유인지 확인합니다.
+ * @param {number} noteId - 확인할 노트의 ID
+ * @param {number} userId - 사용자의 ID
+ * @returns {Promise<boolean>} 노트가 존재하고 소유자가 맞으면 true, 아니면 false
+ */
+const checkNoteExists = async (noteId, userId) => {
+    const [rows] = await pool.execute(
+        'SELECT note_id FROM notes WHERE note_id = ? AND user_id = ?',
+        [noteId, userId]
+    );
+    return rows.length > 0;
+};
+
+// module.exports에 모든 함수를 포함하도록 수정
 module.exports = {
     getNotesFromDB,
     getNoteById,
     createNoteInDB,
     findNoteForUpdate,
     updateNoteInDB,
-    deleteNoteFromDB
+    deleteNoteFromDB,
+    checkNoteExists // 👈 새로 추가된 함수
 };
+

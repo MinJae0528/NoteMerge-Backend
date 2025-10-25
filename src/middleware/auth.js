@@ -4,25 +4,35 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../config/database');
 
 const authenticateToken = async (req, res, next) => {
+    console.log('=== 인증 미들웨어 시작 ===');
+    console.log('요청 URL:', req.method, req.path);
+    console.log('Authorization 헤더:', req.headers['authorization'] ? '존재함' : '없음');
+    
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
+        console.log('❌ 토큰이 없음');
         return res.status(401).json({ success: false, message: 'Access token이 필요합니다.' });
     }
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        console.log('✅ 토큰 디코딩 성공, 사용자 ID:', decoded.userId);
+        
         // 디코딩된 userId를 사용하여 사용자 정보 조회 (토큰이 유효한 사용자인지 DB에서 확인)
         const [users] = await pool.execute('SELECT user_id, username, email FROM users WHERE user_id = ?', [decoded.userId]);
 
         if (users.length === 0) {
+            console.log('❌ 사용자를 찾을 수 없음');
             return res.status(401).json({ success: false, message: '유효하지 않은 토큰입니다.' });
         }
 
         req.user = users[0]; // req.user에 사용자 정보 할당
+        console.log('✅ 인증 완료, 사용자:', users[0].username);
         next();
     } catch (error) {
+        console.log('❌ 토큰 검증 실패:', error.message);
         if (error.name === 'TokenExpiredError') {
             return res.status(401).json({ success: false, message: '토큰이 만료되었습니다.' });
         }
